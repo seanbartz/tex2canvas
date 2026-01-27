@@ -9,6 +9,17 @@ Usage
 - Multiple files: `./tex2canvas.py "Mac HW/Homework 1.tex" "Mac HW/Homework 2.tex"`
 - Output directory: `./tex2canvas.py "Homework 1.tex" -o ./html`
 
+Supported LaTeX environments/commands
+- Math: `$$...$$`, `\[...\]`, and inline `$...$`
+- `eqnarray` (converted to separate display equations)
+- `enumerate`
+- `minipage` (container removed; contents kept)
+- `\section{}`, `\subsection{}`, `\subsubsection{}`
+- `\includegraphics[...]{}`
+- `\maketitle`
+
+Other environments and LaTeX commands may not work or may be left as-is.
+
 Image alt text
 - Use `\includegraphics[alt={...}]{file}` (or `alttext=...`) to set alt text.
 - Or add a line comment like `% alt: A bead on a hoop diagram` before the image.
