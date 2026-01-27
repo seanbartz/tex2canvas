@@ -13,6 +13,7 @@ Supported LaTeX environments/commands
 - Math: `$$...$$`, `\[...\]`, and inline `$...$`
 - `eqnarray` (converted to separate display equations)
 - `enumerate`
+- `itemize`
 - `minipage` (container removed; contents kept)
 - `\section{}`, `\subsection{}`, `\subsubsection{}`
 - `\includegraphics[...]{}`
