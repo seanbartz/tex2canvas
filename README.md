@@ -15,6 +15,7 @@ Supported LaTeX environments/commands
 - `enumerate`
 - `itemize`
 - `minipage` (container removed; contents kept)
+- Nested `itemize`/`enumerate` lists
 - `\section{}`, `\subsection{}`, `\subsubsection{}`
 - `\includegraphics[...]{}`
 - `\maketitle`

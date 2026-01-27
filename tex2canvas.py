@@ -131,6 +131,8 @@ def convert_tex_to_html(tex_path: Path) -> str:
     output_lines = []
     pending_alt = None
     subsec_counter = 0
+    list_stack = []
+    open_li_stack = []
 
     i = 0
     while i < len(lines):
@@ -187,12 +189,57 @@ def convert_tex_to_html(tex_path: Path) -> str:
             continue
 
         if not line:
-            output_lines.append("")
+            if not list_stack:
+                output_lines.append("")
             i += 1
             continue
 
         if re.search(r"\\section\{", line):
             subsec_counter = 0
+
+        begin_list = re.match(r"^\s*\\begin\{(itemize|enumerate)\}\s*$", line)
+        if begin_list:
+            tag = "ul" if begin_list.group(1) == "itemize" else "ol"
+            output_lines.append(f"<{tag}>")
+            list_stack.append(tag)
+            open_li_stack.append(False)
+            i += 1
+            continue
+
+        end_list = re.match(r"^\s*\\end\{(itemize|enumerate)\}\s*$", line)
+        if end_list and list_stack:
+            if open_li_stack[-1]:
+                output_lines.append("</li>")
+                open_li_stack[-1] = False
+            output_lines.append(f"</{list_stack.pop()}>")
+            open_li_stack.pop()
+            i += 1
+            continue
+
+        if re.match(r"^\s*\\item\b", line) and list_stack:
+            item_text = re.sub(r"^\s*\\item\b\s*", "", line).strip()
+            if open_li_stack[-1]:
+                output_lines.append("</li>")
+            if item_text:
+                item_text = re.sub(r"\\emph\{(.*?)\}", r"<em>\1</em>", item_text)
+                item_text = re.sub(r"\\textbf\{(.*?)\}", r"<strong>\1</strong>", item_text)
+                if "\\includegraphics" in item_text:
+                    def repl(m):
+                        opts = m.group(1)
+                        path = m.group(2).strip()
+                        alt = parse_alt_from_options(opts) or pending_alt
+                        resolved = resolve_image_path(path, tex_path.parent)
+                        if not alt:
+                            alt = f"Image: {Path(resolved).stem}"
+                        return f'<img src="{resolved}" alt="{alt}">' 
+                    item_text = re.sub(r"\\includegraphics(?:\[(.*?)\])?\{(.*?)\}", repl, item_text)
+                    pending_alt = None
+                output_lines.append(f"<li>{item_text}")
+            else:
+                output_lines.append("<li>")
+            open_li_stack[-1] = True
+            i += 1
+            continue
 
         line = re.sub(r"\\section\{(.*?)\}", r"<h2>\1</h2>", line)
 
@@ -239,6 +286,12 @@ def convert_tex_to_html(tex_path: Path) -> str:
 
         output_lines.append(line)
         i += 1
+
+    while list_stack:
+        if open_li_stack[-1]:
+            output_lines.append("</li>")
+        output_lines.append(f"</{list_stack.pop()}>")
+        open_li_stack.pop()
 
     blocks = []
     current = []
