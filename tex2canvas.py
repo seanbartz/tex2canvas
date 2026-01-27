@@ -210,6 +210,8 @@ def convert_tex_to_html(tex_path: Path) -> str:
         line = re.sub(r"\\textbf\{(.*?)\}", r"<strong>\1</strong>", line)
         line = re.sub(r"\\begin\{enumerate\}", r"<ol>", line)
         line = re.sub(r"\\end\{enumerate\}", r"</ol>", line)
+        line = re.sub(r"\\begin\{itemize\}", r"<ul>", line)
+        line = re.sub(r"\\end\{itemize\}", r"</ul>", line)
         if re.match(r"^\s*\\item\b", line):
             item_text = re.sub(r"^\s*\\item\b\s*", "", line).strip()
             line = f"<li>{item_text}</li>"
