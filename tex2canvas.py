@@ -188,6 +188,45 @@ def convert_tex_to_html(tex_path: Path) -> str:
             i += 1
             continue
 
+        env_match = re.search(r"\\begin\{(equation\*?|cases|array)\}", line)
+        if env_match:
+            env = env_match.group(1)
+            inner = []
+            after_begin = line.split(f"\\begin{{{env}}}", 1)[1].strip()
+            if after_begin:
+                inner.append(after_begin)
+            i += 1
+            while i < len(lines):
+                next_line = lines[i]
+                code2, comment2 = split_unescaped_percent(next_line)
+                if comment2:
+                    alt_match = re.search(r"\balt\s*:\s*(.+)", comment2, re.IGNORECASE)
+                    if alt_match:
+                        pending_alt = alt_match.group(1).strip()
+                end_token = f"\\end{{{env}}}"
+                if end_token in code2:
+                    before_end = code2.split(end_token, 1)[0].strip()
+                    if before_end:
+                        inner.append(before_end)
+                    break
+                inner.append(code2.rstrip())
+                i += 1
+
+            inner = [l for l in (l.strip() for l in inner) if l]
+            if env in {"cases", "array"}:
+                latex = "\n".join(inner)
+                block = "$$\n" + f"\\begin{{{env}}}\n{latex}\n\\end{{{env}}}\n" + "$$"
+            else:
+                latex = "\n".join(inner)
+                block = "$$\n" + latex + "\n$$"
+            if output_lines and output_lines[-1] != "":
+                output_lines.append("")
+            output_lines.append(block)
+            output_lines.append("")
+            pending_alt = None
+            i += 1
+            continue
+
         if not line:
             if not list_stack:
                 output_lines.append("")
@@ -223,6 +262,7 @@ def convert_tex_to_html(tex_path: Path) -> str:
             if item_text:
                 item_text = re.sub(r"\\emph\{(.*?)\}", r"<em>\1</em>", item_text)
                 item_text = re.sub(r"\\textbf\{(.*?)\}", r"<strong>\1</strong>", item_text)
+                item_text = re.sub(r"\{\\bf\s+(.*?)\}", r"<strong>\1</strong>", item_text)
                 if "\\includegraphics" in item_text:
                     def repl(m):
                         opts = m.group(1)
@@ -241,20 +281,21 @@ def convert_tex_to_html(tex_path: Path) -> str:
             i += 1
             continue
 
-        line = re.sub(r"\\section\{(.*?)\}", r"<h2>\1</h2>", line)
+        line = re.sub(r"\\section\*?\{(.*?)\}", r"<h3>\1</h3>", line)
 
         def replace_subsection(match):
             nonlocal subsec_counter
             content = match.group(1).strip()
             if not content:
                 subsec_counter += 1
-                return f"<h3>Part {subsec_counter}</h3>"
-            return f"<h3>{content}</h3>"
+                return f"<h4>Part {subsec_counter}</h4>"
+            return f"<h4>{content}</h4>"
 
-        line = re.sub(r"\\subsection\{(.*?)\}", replace_subsection, line)
-        line = re.sub(r"\\subsubsection\{(.*?)\}", r"<h4>\1</h4>", line)
+        line = re.sub(r"\\subsection\*?\{(.*?)\}", replace_subsection, line)
+        line = re.sub(r"\\subsubsection\*?\{(.*?)\}", r"<h5>\1</h5>", line)
         line = re.sub(r"\\emph\{(.*?)\}", r"<em>\1</em>", line)
         line = re.sub(r"\\textbf\{(.*?)\}", r"<strong>\1</strong>", line)
+        line = re.sub(r"\{\\bf\s+(.*?)\}", r"<strong>\1</strong>", line)
         line = re.sub(r"\\begin\{enumerate\}", r"<ol>", line)
         line = re.sub(r"\\end\{enumerate\}", r"</ol>", line)
         line = re.sub(r"\\begin\{itemize\}", r"<ul>", line)
@@ -309,7 +350,7 @@ def convert_tex_to_html(tex_path: Path) -> str:
 
     if title:
         # Title/author block if provided.
-        rendered.append(f"<h1>{title}</h1>")
+        rendered.append(f"<h2>{title}</h2>")
         if author:
             rendered.append(f"<p><em>{author}</em></p>")
 
@@ -354,7 +395,7 @@ def convert_tex_to_html(tex_path: Path) -> str:
       line-height: 1.5;
     }}
     img {{ max-width: 100%; height: auto; }}
-    h1, h2, h3, h4 {{ margin-top: 1.2em; }}
+    h2, h3, h4, h5 {{ margin-top: 1.2em; }}
   </style>
 </head>
 <body>
