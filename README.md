@@ -51,5 +51,8 @@ Use `publish_canvas_assignment.py` to create (or update) and publish assignments
 6. Submission type:
    - Default is `on_paper`.
    - Override with `--submission-type` (for example, `online_upload`, `online_text_entry`, `online_url`, `media_recording`).
+7. Duplicate title handling:
+   - If you create without `--assignment-id`, the script first checks for an existing assignment with the same title.
+   - If found, it updates that assignment instead of creating a duplicate (prefers matching due date/time when provided).
 
 The private `.canvas_config.json` file is git-ignored in this repo.

@@ -8,8 +8,9 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 try:
     from dateutil import parser as date_parser
@@ -234,6 +235,58 @@ def resolve_due_at_arg(args):
         return
 
 
+def parse_iso_datetime(value: str):
+    if not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        if date_parser:
+            try:
+                return date_parser.parse(value)
+            except (ValueError, OverflowError):
+                return None
+    return None
+
+
+def due_times_match(existing_due_at: str, target_due_at: str):
+    existing_dt = parse_iso_datetime(existing_due_at)
+    target_dt = parse_iso_datetime(target_due_at)
+    if not existing_dt or not target_dt:
+        return False
+    if existing_dt.tzinfo is None:
+        existing_dt = existing_dt.replace(tzinfo=timezone.utc)
+    if target_dt.tzinfo is None:
+        target_dt = target_dt.replace(tzinfo=timezone.utc)
+    existing_utc = existing_dt.astimezone(timezone.utc)
+    target_utc = target_dt.astimezone(timezone.utc)
+    return existing_utc.replace(microsecond=0) == target_utc.replace(microsecond=0)
+
+
+def canvas_get_json(url: str, token: str):
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as err:
+        body = err.read().decode("utf-8", errors="replace")
+        raise SystemExit(f"Canvas API error {err.code}: {body}") from err
+    except urllib.error.URLError as err:
+        raise SystemExit(f"Network error calling Canvas API: {err}") from err
+
+
 def canvas_request(
     url: str, token: str, fields: list[tuple[str, str]], dry_run: bool, method: str
 ):
@@ -285,9 +338,59 @@ def build_fields(args, description: str):
     return fields
 
 
+def find_existing_assignment_id(
+    api_base: str,
+    course_id: str,
+    token: str,
+    title: str,
+    due_at: Optional[str],
+    dry_run: bool,
+):
+    if dry_run:
+        print("DRY RUN: skipping lookup for existing assignments by name.")
+        return None
+
+    query = urllib.parse.urlencode({"search_term": title, "per_page": 100})
+    url = f"{api_base}/courses/{course_id}/assignments?{query}"
+    payload = canvas_get_json(url, token)
+    if not isinstance(payload, list):
+        return None
+
+    normalized_title = title.strip().casefold()
+    candidates = [
+        assignment
+        for assignment in payload
+        if str(assignment.get("name", "")).strip().casefold() == normalized_title
+    ]
+    if not candidates:
+        return None
+
+    if due_at:
+        due_matches = [
+            assignment
+            for assignment in candidates
+            if due_times_match(str(assignment.get("due_at") or ""), due_at)
+        ]
+        if due_matches:
+            return str(max(due_matches, key=lambda x: int(x.get("id", 0))).get("id"))
+
+    return str(max(candidates, key=lambda x: int(x.get("id", 0))).get("id"))
+
+
 def create_assignment(api_base: str, course_id: str, token: str, args, description: str):
     if not args.title:
         raise SystemExit("--title is required when creating a new assignment.")
+    existing_id = find_existing_assignment_id(
+        api_base, course_id, token, args.title, args.due_at, args.dry_run
+    )
+    if existing_id:
+        print(
+            f"Found existing assignment with matching title (ID {existing_id}). "
+            "Updating it instead of creating a duplicate."
+        )
+        args.assignment_id = existing_id
+        update_assignment(api_base, course_id, token, args, description)
+        return
     url = f"{api_base}/courses/{course_id}/assignments"
     fields = build_fields(args, description)
     result = canvas_request(url, token, fields, args.dry_run, method="POST")
