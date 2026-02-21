@@ -1,3 +1,5 @@
 AGENTS.md
 test_nested_lists.tex
 test_output/
+.pycache/
+.canvas_config.json
