@@ -2,7 +2,11 @@
 # Convert LaTeX homework into Canvas-ready HTML with equation images.
 import argparse
 import html
+import hashlib
 import re
+import shutil
+import subprocess
+import tempfile
 from urllib.parse import quote
 from pathlib import Path
 
@@ -91,6 +95,113 @@ def extract_body(text: str):
     return text[m.end() : n.start()]
 
 
+def extract_preamble(text: str):
+    # Extract content before \begin{document} for rebuilding standalone TikZ files.
+    m = re.search(r"\\begin\{document\}", text)
+    if not m:
+        return text
+    return text[: m.start()]
+
+
+def build_tikz_standalone_doc(tikz_code: str, preamble: str) -> str:
+    # Build a minimal standalone document that keeps package/library config.
+    preserved = []
+    for line in preamble.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            preserved.append(line)
+            continue
+        if stripped.startswith(r"\documentclass"):
+            continue
+        if stripped.startswith(r"\begin{document}") or stripped.startswith(r"\end{document}"):
+            continue
+        if stripped.startswith(r"\title") or stripped.startswith(r"\author") or stripped.startswith(r"\date"):
+            continue
+        preserved.append(line)
+
+    parts = [r"\documentclass[tikz,border=4pt]{standalone}"]
+    if preserved:
+        parts.extend(preserved)
+    parts.extend([r"\begin{document}", tikz_code, r"\end{document}", ""])
+    return "\n".join(parts)
+
+
+def render_tikz_to_png(tikz_code: str, preamble: str, out_dir: Path, basename: str):
+    # Render a tikzpicture into a PNG and return its filename, or None on failure.
+    if shutil.which("pdflatex") is None:
+        return None
+
+    digest = hashlib.sha1(tikz_code.encode("utf-8")).hexdigest()[:10]
+    png_name = f"{basename}_{digest}.png"
+    png_path = out_dir / png_name
+    if png_path.exists():
+        return png_name
+
+    with tempfile.TemporaryDirectory(prefix="tex2canvas_tikz_", dir=str(out_dir)) as tmp:
+        tmp_dir = Path(tmp)
+        tex_file = tmp_dir / "tikz_figure.tex"
+        pdf_file = tmp_dir / "tikz_figure.pdf"
+        png_file = tmp_dir / "tikz_figure.png"
+        tex_file.write_text(build_tikz_standalone_doc(tikz_code, preamble), encoding="utf-8")
+
+        try:
+            subprocess.run(
+                ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", tex_file.name],
+                cwd=tmp_dir,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        except subprocess.CalledProcessError:
+            return None
+
+        if shutil.which("pdftocairo"):
+            try:
+                subprocess.run(
+                    [
+                        "pdftocairo",
+                        "-png",
+                        "-singlefile",
+                        "-transp",
+                        str(pdf_file),
+                        str(tmp_dir / "tikz_figure"),
+                    ],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+            except subprocess.CalledProcessError:
+                return None
+        elif shutil.which("magick"):
+            try:
+                subprocess.run(
+                    [
+                        "magick",
+                        "-density",
+                        "300",
+                        f"{pdf_file}[0]",
+                        "-background",
+                        "none",
+                        str(png_file),
+                    ],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+            except subprocess.CalledProcessError:
+                return None
+        else:
+            return None
+
+        if not png_file.exists():
+            return None
+        png_file.replace(png_path)
+    return png_name
+
+
 def canvas_equation_img(latex: str) -> str:
     # Canvas expects equation images rather than MathJax scripts.
     encoded = quote(latex, safe="")
@@ -122,10 +233,11 @@ def convert_math_to_canvas(text: str) -> str:
     return text
 
 
-def convert_tex_to_html(tex_path: Path) -> str:
+def convert_tex_to_html(tex_path: Path, out_dir: Path) -> str:
     raw = tex_path.read_text(encoding="utf-8")
     title, author = extract_title_author(raw)
     body = extract_body(raw)
+    preamble = extract_preamble(raw)
     lines = body.splitlines()
 
     output_lines = []
@@ -133,6 +245,7 @@ def convert_tex_to_html(tex_path: Path) -> str:
     subsec_counter = 0
     list_stack = []
     open_li_stack = []
+    tikz_counter = 0
 
     i = 0
     while i < len(lines):
@@ -144,6 +257,51 @@ def convert_tex_to_html(tex_path: Path) -> str:
             if alt_match:
                 pending_alt = alt_match.group(1).strip()
         line = code.rstrip()
+
+        if r"\begin{tikzpicture}" in line:
+            # Render TikZ blocks to PNG so Canvas can display them as regular images.
+            tikz_lines = []
+            if r"\end{tikzpicture}" in line:
+                start = line.find(r"\begin{tikzpicture}")
+                end = line.find(r"\end{tikzpicture}") + len(r"\end{tikzpicture}")
+                tikz_lines.append(line[start:end])
+            else:
+                start = line.find(r"\begin{tikzpicture}")
+                tikz_lines.append(line[start:])
+                i += 1
+                while i < len(lines):
+                    next_line = lines[i]
+                    code2, comment2 = split_unescaped_percent(next_line)
+                    if comment2:
+                        alt_match = re.search(r"\balt\s*:\s*(.+)", comment2, re.IGNORECASE)
+                        if alt_match:
+                            pending_alt = alt_match.group(1).strip()
+                    tikz_lines.append(code2.rstrip())
+                    if r"\end{tikzpicture}" in code2:
+                        break
+                    i += 1
+
+            tikz_code = "\n".join(tikz_lines).strip()
+            tikz_counter += 1
+            alt = pending_alt or f"TikZ figure {tikz_counter}"
+            png_name = render_tikz_to_png(
+                tikz_code,
+                preamble,
+                out_dir,
+                f"{tex_path.stem}_tikz_{tikz_counter}",
+            )
+
+            if output_lines and output_lines[-1] != "":
+                output_lines.append("")
+            if png_name:
+                escaped_alt = html.escape(alt, quote=True)
+                output_lines.append(f'<img src="{png_name}" alt="{escaped_alt}">')
+            else:
+                output_lines.append(tikz_code)
+            output_lines.append("")
+            pending_alt = None
+            i += 1
+            continue
 
         if r"\begin{eqnarray}" in line:
             # Convert eqnarray into separate display equations for Canvas.
@@ -236,7 +394,9 @@ def convert_tex_to_html(tex_path: Path) -> str:
         if re.search(r"\\section\{", line):
             subsec_counter = 0
 
-        begin_list = re.match(r"^\s*\\begin\{(itemize|enumerate)\}\s*$", line)
+        begin_list = re.match(
+            r"^\s*\\begin\{(itemize|enumerate)\}(?:\[[^\]]*\])?\s*$", line
+        )
         if begin_list:
             tag = "ul" if begin_list.group(1) == "itemize" else "ol"
             output_lines.append(f"<{tag}>")
@@ -296,9 +456,9 @@ def convert_tex_to_html(tex_path: Path) -> str:
         line = re.sub(r"\\emph\{(.*?)\}", r"<em>\1</em>", line)
         line = re.sub(r"\\textbf\{(.*?)\}", r"<strong>\1</strong>", line)
         line = re.sub(r"\{\\bf\s+(.*?)\}", r"<strong>\1</strong>", line)
-        line = re.sub(r"\\begin\{enumerate\}", r"<ol>", line)
+        line = re.sub(r"\\begin\{enumerate\}(?:\[[^\]]*\])?", r"<ol>", line)
         line = re.sub(r"\\end\{enumerate\}", r"</ol>", line)
-        line = re.sub(r"\\begin\{itemize\}", r"<ul>", line)
+        line = re.sub(r"\\begin\{itemize\}(?:\[[^\]]*\])?", r"<ul>", line)
         line = re.sub(r"\\end\{itemize\}", r"</ul>", line)
         if re.match(r"^\s*\\item\b", line):
             item_text = re.sub(r"^\s*\\item\b\s*", "", line).strip()
@@ -370,7 +530,7 @@ def convert_tex_to_html(tex_path: Path) -> str:
         block = block.replace("\\\\", "<br>")
         rendered.append(f"<p>{block}</p>")
 
-    html = """<!DOCTYPE html>
+    html_doc = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -404,11 +564,11 @@ def convert_tex_to_html(tex_path: Path) -> str:
 </html>
 """.format(title=title or tex_path.stem, body="\n".join(rendered))
 
-    return html
+    return html_doc
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert LaTeX homework to HTML with MathJax for Canvas.")
+    parser = argparse.ArgumentParser(description="Convert LaTeX homework to Canvas HTML (including TikZ image rendering).")
     parser.add_argument("inputs", nargs="+", help="TeX file(s) to convert")
     parser.add_argument("-o", "--out-dir", default=None, help="Output directory (default: alongside input)")
     args = parser.parse_args()
@@ -417,9 +577,9 @@ def main():
         tex_path = Path(input_path)
         if not tex_path.exists():
             raise SystemExit(f"File not found: {tex_path}")
-        html = convert_tex_to_html(tex_path)
         out_dir = Path(args.out_dir) if args.out_dir else tex_path.parent
         out_dir.mkdir(parents=True, exist_ok=True)
+        html = convert_tex_to_html(tex_path, out_dir)
         out_path = out_dir / f"{tex_path.stem}.html"
         out_path.write_text(html, encoding="utf-8")
         print(f"Wrote {out_path}")
