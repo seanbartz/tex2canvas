@@ -346,7 +346,7 @@ def convert_tex_to_html(tex_path: Path, out_dir: Path) -> str:
             i += 1
             continue
 
-        env_match = re.search(r"\\begin\{(equation\*?|cases|array)\}", line)
+        env_match = re.search(r"\\begin\{(equation\*?|cases|array|align\*?)\}", line)
         if env_match:
             env = env_match.group(1)
             inner = []
@@ -371,7 +371,7 @@ def convert_tex_to_html(tex_path: Path, out_dir: Path) -> str:
                 i += 1
 
             inner = [l for l in (l.strip() for l in inner) if l]
-            if env in {"cases", "array"}:
+            if env in {"cases", "array", "align", "align*"}:
                 latex = "\n".join(inner)
                 block = "$$\n" + f"\\begin{{{env}}}\n{latex}\n\\end{{{env}}}\n" + "$$"
             else:
