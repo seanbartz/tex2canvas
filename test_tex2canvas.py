@@ -91,3 +91,77 @@ def test_align_star_multiline():
     assert "equation_image" in html
     assert r"\begin{align*}" in html
     assert r"\end{align*}" in html
+
+
+# ---------------------------------------------------------------------------
+# \centering command
+# ---------------------------------------------------------------------------
+
+def test_centering_is_stripped():
+    html = _html_from_tex(r"""
+        \documentclass{article}
+        \begin{document}
+        \centering
+        Some centered text.
+        \end{document}
+    """)
+    assert r"\centering" not in html
+    assert "Some centered text" in html
+
+
+def test_centering_with_image():
+    html = _html_from_tex(r"""
+        \documentclass{article}
+        \begin{document}
+        \centering
+        \includegraphics{figure.png}
+        \end{document}
+    """)
+    assert r"\centering" not in html
+    assert "figure.png" in html
+
+
+# ---------------------------------------------------------------------------
+# \clearpage / \newpage commands
+# ---------------------------------------------------------------------------
+
+def test_clearpage_is_stripped():
+    html = _html_from_tex(r"""
+        \documentclass{article}
+        \begin{document}
+        First section.
+        \clearpage
+        Second section.
+        \end{document}
+    """)
+    assert r"\clearpage" not in html
+    assert "First section" in html
+    assert "Second section" in html
+
+
+def test_newpage_is_stripped():
+    html = _html_from_tex(r"""
+        \documentclass{article}
+        \begin{document}
+        Page one.
+        \newpage
+        Page two.
+        \end{document}
+    """)
+    assert r"\newpage" not in html
+    assert "Page one" in html
+    assert "Page two" in html
+
+
+def test_cleardoublepage_is_stripped():
+    html = _html_from_tex(r"""
+        \documentclass{article}
+        \begin{document}
+        Before.
+        \cleardoublepage
+        After.
+        \end{document}
+    """)
+    assert r"\cleardoublepage" not in html
+    assert "Before" in html
+    assert "After" in html
