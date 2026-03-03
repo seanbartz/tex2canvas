@@ -485,6 +485,10 @@ def convert_tex_to_html(tex_path: Path, out_dir: Path) -> str:
         if line == "\\maketitle":
             line = ""
 
+        # Strip layout-only commands that have no HTML equivalent.
+        if re.match(r"^\s*\\(centering|clearpage|cleardoublepage|newpage)\s*$", line):
+            line = ""
+
         output_lines.append(line)
         i += 1
 
